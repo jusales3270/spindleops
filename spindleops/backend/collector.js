@@ -1,256 +1,112 @@
 /**
- * SpindleOps — Collector
- * Conecta em cada máquina CNC pelo protocolo correto
- * e retorna um objeto padronizado de métricas.
+ * SpindleOps — Collector v2
+ * Roteador que chama containers Python (um por protocolo) via HTTP.
+ * Cada container expõe /health, /test e /read.
  */
 
 const { EventEmitter } = require('events');
-const net = require('net');
+
+// Mapa de protocolo → URL base do container
+const PROTOCOL_SERVICES = {
+  fanuc:         'http://localhost:8765',
+  fanuc_china:   'http://localhost:8765',
+  siemens_s7:    'http://localhost:8766',
+  siemens_opcua: 'http://localhost:8772',
+  modbus:        'http://localhost:8767',
+  heidenhain:    'http://localhost:8768',
+  mtconnect:     'http://localhost:8769',
+  mitsubishi:    'http://localhost:8770',
+  mazak:         'http://localhost:8771',
+};
+
+// Schema canônico de uma leitura — tem que casar 1:1 com as colunas de `metrics`
+// no database.js: o INSERT usa parâmetros nomeados e falha se faltar qualquer campo.
+const METRIC_FIELDS = [
+  'status', 'program_name',
+  'spindle_speed', 'spindle_load', 'feed_rate',
+  'feed_override', 'spindle_override',
+  'pos_x', 'pos_y', 'pos_z',
+  'alarm_code', 'alarm_message',
+  'parts_count', 'cycle_time',
+  'tool_number', 'cnc_mode',
+  'axis_load_x', 'axis_load_y', 'axis_load_z',
+  'auto_time', 'cutting_time',
+];
+
+const TEXT_FIELDS = new Set(['status', 'program_name', 'alarm_code', 'alarm_message', 'cnc_mode']);
 
 class Collector extends EventEmitter {
   constructor(config) {
     super();
     this.config    = config;
     this.connected = false;
-    this.client    = null;
     this._simState = null;
   }
 
+  _serviceUrl() {
+    return PROTOCOL_SERVICES[this.config.protocol];
+  }
+
+  _params() {
+    const p = new URLSearchParams();
+    if (this.config.address) p.set('ip', this.config.address);
+    if (this.config.port)    p.set('port', this.config.port);
+    // params extras vindos do banco (rack/slot/plctype/etc)
+    if (this.config.registers) {
+      for (const [k, v] of Object.entries(this.config.registers)) {
+        p.set(k, v);
+      }
+    }
+    return p.toString();
+  }
+
+  async _callService(endpoint) {
+    const base = this._serviceUrl();
+    if (!base) throw new Error(`Protocolo não suportado: ${this.config.protocol}`);
+    const url = `${base}${endpoint}?${this._params()}`;
+    const headers = {};
+    if (process.env.SPINDLEOPS_SERVICE_TOKEN) {
+      headers['X-Service-Token'] = process.env.SPINDLEOPS_SERVICE_TOKEN;
+    }
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // ── CONNECT ─────────────────────────────────────────────────────────────
   async connect() {
     try {
-      switch (this.config.protocol) {
-        case 'fanuc':
-        case 'fanuc_china':
-          await this._connectFanuc(); break;
-        case 'siemens_s7':
-        case 'siemens_opcua':
-          await this._connectOPCUA(); break;
-        case 'modbus':
-          await this._connectModbus(); break;
-        case 'heidenhain':
-          await this._connectTCP(); break;
-        case 'simulator':
-          this._initSimulator(); break;
-        default:
-          console.warn(`[${this.config.id}] Protocolo não suportado: ${this.config.protocol}`);
+      if (this.config.protocol === 'simulator') {
+        this._initSimulator();
+        return;
+      }
+      const r = await this._callService('/test');
+      this.connected = !!r.connected;
+      if (this.connected) {
+        console.log(`[${this.config.id}] ${this.config.protocol} conectado`);
+        this.emit('connected', this.config.id);
+      } else {
+        console.warn(`[${this.config.id}] ${this.config.protocol} falhou: ${r.error || r.error_code}`);
       }
     } catch (err) {
-      console.error(`[${this.config.id}] Falha na conexão: ${err.message}`);
+      console.error(`[${this.config.id}] Falha conexão: ${err.message}`);
       this.connected = false;
     }
   }
 
-  // ── FANUC FOCAS2 ────────────────────────────────────────────────────────
-  async _connectFanuc() {
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection(
-        { host: this.config.address, port: this.config.port || 8193, timeout: 5000 },
-        () => {
-          this.client    = socket;
-          this.connected = true;
-          console.log(`[${this.config.id}] Fanuc conectado em ${this.config.address}`);
-          this.emit('connected', this.config.id);
-          resolve();
-        }
-      );
-      socket.on('error',   err => reject(err));
-      socket.on('timeout', ()  => reject(new Error('Timeout Fanuc')));
-    });
-  }
-
-  async _readFanuc() {
-    /**
-     * Leitura real via Fanuc FOCAS2:
-     *
-     * Instale:  npm install fanuc-focas2
-     * Docs:     https://www.fwsi.jp/en/products/focas/focas2/
-     *
-     * Funções principais:
-     *   cnc_allclibhndl3()  → abre handle
-     *   cnc_statinfo()      → status (modo, programa)
-     *   cnc_rdspeed()       → velocidades spindle/feed
-     *   cnc_rdaxisdata()    → posições X Y Z
-     *   cnc_rdprgnum()      → número do programa ativo
-     *   cnc_rdalarmmsg()    → alarmes ativos
-     *
-     * Por ora retorna simulação para não bloquear o servidor.
-     */
-    return this._simulateData();
-  }
-
-  // ── SIEMENS OPC-UA ──────────────────────────────────────────────────────
-  async _connectOPCUA() {
-    const { OPCUAClient } = require('node-opcua');
-    this.opcClient = OPCUAClient.create({
-      endpointMustExist: false,
-      connectionStrategy: { maxRetry: 3, initialDelay: 1000 }
-    });
-    await this.opcClient.connect(this.config.address);
-    this.opcSession = await this.opcClient.createSession();
-    this.connected  = true;
-    console.log(`[${this.config.id}] OPC-UA conectado em ${this.config.address}`);
-    this.emit('connected', this.config.id);
-  }
-
-  async _readOPCUA() {
-    if (!this.opcSession) return null;
-    /**
-     * Node IDs padrão Siemens 840D sl / 828D
-     * Adapte conforme sua versão de firmware.
-     *
-     * Use o UaExpert (gratuito) para explorar os nós disponíveis.
-     */
-    const nodes = {
-      status:           'ns=2;s=Channel/ProgramInfo/status',
-      program_name:     'ns=2;s=Channel/ProgramInfo/progName',
-      spindle_speed:    'ns=2;s=Channel/SpindleControl/ActSpeed',
-      spindle_load:     'ns=2;s=Channel/SpindleControl/ActLoad',
-      feed_rate:        'ns=2;s=Channel/FeedControl/ActFeedrate',
-      feed_override:    'ns=2;s=Channel/FeedControl/FeedRateOvr',
-      spindle_override: 'ns=2;s=Channel/SpindleControl/SpindleSpeedOvr',
-      pos_x:            'ns=2;s=Channel/GeometricMachinePos/X',
-      pos_y:            'ns=2;s=Channel/GeometricMachinePos/Y',
-      pos_z:            'ns=2;s=Channel/GeometricMachinePos/Z',
-      parts_count:      'ns=2;s=Channel/ProgramInfo/WorkpiecesProduced',
-    };
-    try {
-      const results = await Promise.all(
-        Object.entries(nodes).map(async ([key, nodeId]) => {
-          try {
-            const dv = await this.opcSession.readVariableValue(nodeId);
-            return [key, dv.value?.value ?? null];
-          } catch { return [key, null]; }
-        })
-      );
-      const data = Object.fromEntries(results);
-      data.status = this._normalizeStatus(data.status);
-      return data;
-    } catch (err) {
-      console.error(`[${this.config.id}] Leitura OPC-UA: ${err.message}`);
-      return null;
-    }
-  }
-
-  // ── MODBUS TCP ──────────────────────────────────────────────────────────
-  async _connectModbus() {
-    const ModbusRTU = require('modbus-serial');
-    this.client = new ModbusRTU();
-    await this.client.connectTCP(this.config.address, { port: this.config.port || 502 });
-    this.client.setID(1);
-    this.connected = true;
-    console.log(`[${this.config.id}] Modbus TCP conectado`);
-    this.emit('connected', this.config.id);
-  }
-
-  async _readModbus() {
-    // Mapeamento padrão de registros (pode ser sobrescrito por config.registers)
-    const DEFAULT_REG = {
-      status: 0, spindle_speed: 1, spindle_load: 2, feed_rate: 3,
-      parts_count: 4, feed_override: 5, spindle_override: 6,
-      pos_x: 7, pos_y: 8, pos_z: 9
-    };
-    const reg = { ...DEFAULT_REG, ...(this.config.registers || {}) };
-
-    // Descobre o maior índice para saber quantos registros ler
-    const maxReg = Math.max(...Object.values(reg));
-    const r = await this.client.readHoldingRegisters(0, maxReg + 1);
-    const d = r.data;
-
-    return {
-      status:           ['offline','idle','running','alarm'][d[reg.status]] || 'offline',
-      spindle_speed:    d[reg.spindle_speed],
-      spindle_load:     d[reg.spindle_load] / 10,
-      feed_rate:        d[reg.feed_rate],
-      parts_count:      d[reg.parts_count],
-      feed_override:    d[reg.feed_override] || 100,
-      spindle_override: d[reg.spindle_override] || 100,
-      pos_x: d[reg.pos_x] / 100,
-      pos_y: d[reg.pos_y] / 100,
-      pos_z: d[reg.pos_z] / 100,
-    };
-  }
-
-  // ── TCP GENÉRICO (Heidenhain LSV2) ──────────────────────────────────────
-  async _connectTCP() {
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection(
-        { host: this.config.address, port: this.config.port || 19000, timeout: 5000 },
-        () => {
-          this.client    = socket;
-          this.connected = true;
-          console.log(`[${this.config.id}] TCP conectado em ${this.config.address}`);
-          resolve();
-        }
-      );
-      socket.on('error',   err => reject(err));
-      socket.on('timeout', ()  => reject(new Error('Timeout TCP')));
-    });
-  }
-
-  // ── SIMULADOR ───────────────────────────────────────────────────────────
-  _initSimulator() {
-    this._simState = {
-      status:      'running',
-      program:     'FLANGE_M8.NC',
-      spindleRpm:  8000,
-      feedRate:    800,
-      parts:       0,
-      cycleStart:  Date.now(),
-      loadBase:    68,
-    };
-    this.connected = true;
-    console.log(`[${this.config.id}] Simulador iniciado`);
-    this.emit('connected', this.config.id);
-  }
-
-  _simulateData() {
-    const s   = this._simState;
-    const now = Date.now();
-    const elapsed = (now - s.cycleStart) / 1000;
-
-    if (elapsed > 120) {
-      s.parts++;
-      s.cycleStart = now;
-    }
-
-    const j   = r => (Math.random() - 0.5) * r;
-    const load = Math.min(100, Math.max(5,
-      s.loadBase + j(18) + Math.sin(elapsed / 12) * 12
-    ));
-    const hasAlarm = Math.random() < 0.008;
-    const isIdle   = Math.random() < 0.04;
-
-    return {
-      status:           hasAlarm ? 'alarm' : isIdle ? 'idle' : 'running',
-      program_name:     s.program,
-      spindle_speed:    Math.round(Math.max(0, s.spindleRpm + j(300))),
-      spindle_load:     +load.toFixed(1),
-      feed_rate:        Math.round(Math.max(0, s.feedRate + j(60))),
-      feed_override:    100,
-      spindle_override: 100,
-      pos_x:            +(125.4 + j(60)).toFixed(3),
-      pos_y:            +(-88.2 + j(40)).toFixed(3),
-      pos_z:            +(-15.6 + j(12)).toFixed(3),
-      alarm_code:       hasAlarm ? 'ALM-1001' : null,
-      alarm_message:    hasAlarm ? 'Sobrecarga no eixo X' : null,
-      parts_count:      s.parts,
-      cycle_time:       +elapsed.toFixed(1),
-    };
-  }
-
-  // ── LEITURA UNIFICADA ───────────────────────────────────────────────────
+  // ── READ ────────────────────────────────────────────────────────────────
   async read() {
     if (!this.connected) return null;
     try {
-      switch (this.config.protocol) {
-        case 'fanuc':
-        case 'fanuc_china':   return await this._readFanuc();
-        case 'siemens_s7':
-        case 'siemens_opcua': return await this._readOPCUA();
-        case 'modbus':        return await this._readModbus();
-        case 'simulator':     return this._simulateData();
-        default:              return null;
+      if (this.config.protocol === 'simulator') {
+        return this._normalize(this._simulateData());
       }
+      const r = await this._callService('/read');
+      if (!r.connected) {
+        this.connected = false;
+        return null;
+      }
+      return this._normalize(r);
     } catch (err) {
       console.error(`[${this.config.id}] Erro leitura: ${err.message}`);
       this.connected = false;
@@ -259,18 +115,85 @@ class Collector extends EventEmitter {
   }
 
   async disconnect() {
-    try {
-      if (this.opcSession) await this.opcSession.close();
-      if (this.opcClient)  await this.opcClient.disconnect();
-      if (this.client?.end)     this.client.end();
-      if (this.client?.destroy) this.client.destroy();
-    } catch {}
     this.connected = false;
   }
 
-  _normalizeStatus(raw) {
-    if (typeof raw === 'string') return raw;
-    return { 0:'idle', 1:'running', 2:'idle', 3:'idle' }[raw] || 'offline';
+  // ── NORMALIZAÇÃO ────────────────────────────────────────────────────────
+  // Cada serviço devolve um subconjunto diferente de campos (e às vezes
+  // strings vindas de XML). Aqui tudo vira o objeto canônico do schema.
+  _normalize(raw) {
+    const out = {};
+    for (const field of METRIC_FIELDS) {
+      let v = raw[field];
+      if (v === undefined || v === '') v = null;
+      if (v !== null && !TEXT_FIELDS.has(field)) {
+        const n = typeof v === 'number' ? v : parseFloat(v);
+        v = Number.isFinite(n) ? n : null;
+      }
+      out[field] = v;
+    }
+    // Heidenhain devolve posições num dicionário `axes`
+    if (raw.axes && typeof raw.axes === 'object') {
+      for (const [axis, field] of [['X', 'pos_x'], ['Y', 'pos_y'], ['Z', 'pos_z']]) {
+        const v = raw.axes[axis] ?? raw.axes[axis.toLowerCase()];
+        if (out[field] === null && v != null) {
+          const n = parseFloat(v);
+          out[field] = Number.isFinite(n) ? n : null;
+        }
+      }
+    }
+    if (!out.status) out.status = 'offline';
+    return out;
+  }
+
+  // ── SIMULADOR (mantido para fallback / demos) ──────────────────────────
+  _initSimulator() {
+    this._simState = {
+      status: 'running', program: 'FLANGE_M8.NC',
+      spindleRpm: 8000, feedRate: 800, parts: 0,
+      cycleStart: Date.now(), loadBase: 68,
+      startedAt: Date.now(), tool: 4,
+    };
+    this.connected = true;
+    console.log(`[${this.config.id}] Simulador iniciado`);
+    this.emit('connected', this.config.id);
+  }
+
+  _simulateData() {
+    const s = this._simState;
+    const now = Date.now();
+    const elapsed = (now - s.cycleStart) / 1000;
+    if (elapsed > 120) {
+      s.parts++;
+      s.cycleStart = now;
+      s.tool = 1 + (s.tool % 8); // troca de ferramenta a cada ciclo
+    }
+    const j = r => (Math.random() - 0.5) * r;
+    const load = Math.min(100, Math.max(5, s.loadBase + j(18) + Math.sin(elapsed / 12) * 12));
+    const hasAlarm = Math.random() < 0.008;
+    const isIdle   = Math.random() < 0.04;
+    return {
+      status: hasAlarm ? 'alarm' : isIdle ? 'idle' : 'running',
+      program_name: s.program,
+      spindle_speed: Math.round(Math.max(0, s.spindleRpm + j(300))),
+      spindle_load: +load.toFixed(1),
+      feed_rate: Math.round(Math.max(0, s.feedRate + j(60))),
+      feed_override: 100, spindle_override: 100,
+      pos_x: +(125.4 + j(60)).toFixed(3),
+      pos_y: +(-88.2 + j(40)).toFixed(3),
+      pos_z: +(-15.6 + j(12)).toFixed(3),
+      alarm_code: hasAlarm ? 'ALM-1001' : null,
+      alarm_message: hasAlarm ? 'Sobrecarga no eixo X' : null,
+      parts_count: s.parts,
+      cycle_time: +elapsed.toFixed(1),
+      tool_number: s.tool,
+      cnc_mode: isIdle ? 'EDIT' : 'AUTO',
+      axis_load_x: +Math.min(100, Math.max(2, load * 0.6 + j(8))).toFixed(1),
+      axis_load_y: +Math.min(100, Math.max(2, load * 0.5 + j(8))).toFixed(1),
+      axis_load_z: +Math.min(100, Math.max(2, load * 0.7 + j(8))).toFixed(1),
+      auto_time: +((now - s.startedAt) / 60000).toFixed(1),      // minutos em automático
+      cutting_time: +((now - s.startedAt) / 60000 * 0.8).toFixed(1),
+    };
   }
 }
 

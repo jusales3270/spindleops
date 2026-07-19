@@ -33,6 +33,13 @@ db.exec(`
     alarm_message    TEXT,
     parts_count      INTEGER,
     cycle_time       REAL,
+    tool_number      INTEGER,
+    cnc_mode         TEXT,
+    axis_load_x      REAL,
+    axis_load_y      REAL,
+    axis_load_z      REAL,
+    auto_time        REAL,
+    cutting_time     REAL,
     FOREIGN KEY (machine_id) REFERENCES machines(id)
   );
 
@@ -53,10 +60,20 @@ db.exec(`
     ON events(machine_id, timestamp DESC);
 `);
 
-// Migração: adiciona coluna registers se não existir (bancos já criados)
+// Migrações: adiciona colunas que não existem (bancos já criados)
 try {
   db.exec(`ALTER TABLE machines ADD COLUMN registers TEXT`);
 } catch (_) { /* coluna já existe — ignorar */ }
+
+for (const col of [
+  'tool_number INTEGER', 'cnc_mode TEXT',
+  'axis_load_x REAL', 'axis_load_y REAL', 'axis_load_z REAL',
+  'auto_time REAL', 'cutting_time REAL',
+]) {
+  try {
+    db.exec(`ALTER TABLE metrics ADD COLUMN ${col}`);
+  } catch (_) { /* coluna já existe — ignorar */ }
+}
 
 // Detecta transições de status e registra como eventos
 let lastStatus = {};
@@ -71,14 +88,20 @@ module.exports = {
         feed_override, spindle_override,
         pos_x, pos_y, pos_z,
         alarm_code, alarm_message,
-        parts_count, cycle_time
+        parts_count, cycle_time,
+        tool_number, cnc_mode,
+        axis_load_x, axis_load_y, axis_load_z,
+        auto_time, cutting_time
       ) VALUES (
         @machine_id, @status, @program_name,
         @spindle_speed, @spindle_load, @feed_rate,
         @feed_override, @spindle_override,
         @pos_x, @pos_y, @pos_z,
         @alarm_code, @alarm_message,
-        @parts_count, @cycle_time
+        @parts_count, @cycle_time,
+        @tool_number, @cnc_mode,
+        @axis_load_x, @axis_load_y, @axis_load_z,
+        @auto_time, @cutting_time
       )
     `);
     stmt.run({ machine_id: machineId, ...data });
@@ -196,7 +219,9 @@ module.exports = {
         COUNT(*) as total,
         SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running,
         AVG(CASE WHEN status='running' THEN spindle_load ELSE NULL END) as avg_load,
-        MAX(parts_count) - MIN(parts_count) as parts_produced
+        MAX(parts_count) - MIN(parts_count) as parts_produced,
+        MAX(auto_time) - MIN(auto_time) as auto_minutes,
+        MAX(cutting_time) - MIN(cutting_time) as cutting_minutes
       FROM metrics
       WHERE machine_id = ?
         AND timestamp >= datetime('now', '-' || ? || ' hours')
@@ -211,7 +236,10 @@ module.exports = {
       performance:  +(performance  * 100).toFixed(1),
       quality:      +(quality      * 100).toFixed(1),
       oee:          +(availability * performance * quality * 100).toFixed(1),
-      parts_produced: stats.parts_produced || 0
+      parts_produced: stats.parts_produced || 0,
+      // contadores acumulados do CNC — delta do período, em minutos (null se a máquina não reporta)
+      auto_minutes:    stats.auto_minutes    != null ? +stats.auto_minutes.toFixed(1)    : null,
+      cutting_minutes: stats.cutting_minutes != null ? +stats.cutting_minutes.toFixed(1) : null,
     };
   },
 
@@ -265,7 +293,13 @@ module.exports = {
   },
 
   deleteMachine(id) {
-    db.prepare('DELETE FROM machines WHERE id=?').run(id);
+    // FK está ativa no better-sqlite3: métricas/eventos precisam sair antes da máquina
+    db.transaction(() => {
+      db.prepare('DELETE FROM metrics WHERE machine_id=?').run(id);
+      db.prepare('DELETE FROM events WHERE machine_id=?').run(id);
+      db.prepare('DELETE FROM machines WHERE id=?').run(id);
+    })();
+    delete lastStatus[id];
   },
 
   getMachines() {

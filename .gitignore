@@ -10,3 +10,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .sh
+*.backup
+__pycache__/
+backend/fwlib/
