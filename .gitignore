@@ -12,4 +12,4 @@ yarn-error.log*
 .sh
 *.backup
 __pycache__/
-backend/fwlib/
+spindleops/backend/fwlib/
