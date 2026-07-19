@@ -1,17 +1,20 @@
 # Serviços de protocolo do SpindleOps (um container por protocolo).
 #
-# Segurança: cada serviço faz bind em 127.0.0.1 (só o host alcança) e,
-# se SPINDLEOPS_SERVICE_TOKEN estiver definido no .env, exige o token
-# em toda requisição (o backend Node envia automaticamente).
+# Rede: cada serviço é publicado APENAS em 127.0.0.1 do computador — só o
+# backend Node (rodando na mesma máquina) alcança os serviços. As conexões
+# de saída para os CNCs da rede funcionam normalmente de dentro do container.
+# Funciona igual em Windows, Mac e Linux (não depende de network_mode: host).
+#
+# Segurança extra: se SPINDLEOPS_SERVICE_TOKEN estiver no .env, todo
+# request exige o token (o backend Node envia automaticamente).
 #
 # Subir tudo: docker compose up -d --build
 
 x-service-defaults: &service-defaults
-  network_mode: host
   restart: unless-stopped
   environment:
     - SPINDLEOPS_SERVICE_TOKEN=${SPINDLEOPS_SERVICE_TOKEN:-}
-    - BIND_HOST=${SERVICE_BIND_HOST:-127.0.0.1}
+    - BIND_HOST=0.0.0.0   # dentro do container; exposição ao host é limitada pelo "127.0.0.1:" abaixo
 
 services:
   focas:
@@ -19,45 +22,61 @@ services:
     build: ./focas-service
     image: focas-service
     container_name: focas-service
+    ports:
+      - "127.0.0.1:8765:8765"
 
   s7:
     <<: *service-defaults
     build: ./s7-service
     image: s7-service
     container_name: s7-service
+    ports:
+      - "127.0.0.1:8766:8766"
 
   opcua:
     <<: *service-defaults
     build: ./opcua-service
     image: opcua-service
     container_name: opcua-service
+    ports:
+      - "127.0.0.1:8772:8772"
 
   modbus:
     <<: *service-defaults
     build: ./modbus-service
     image: modbus-service
     container_name: modbus-service
+    ports:
+      - "127.0.0.1:8767:8767"
 
   heidenhain:
     <<: *service-defaults
     build: ./heidenhain-service
     image: heidenhain-service
     container_name: heidenhain-service
+    ports:
+      - "127.0.0.1:8768:8768"
 
   mtconnect:
     <<: *service-defaults
     build: ./mtconnect-service
     image: mtconnect-service
     container_name: mtconnect-service
+    ports:
+      - "127.0.0.1:8769:8769"
 
   mitsubishi:
     <<: *service-defaults
     build: ./mitsubishi-service
     image: mitsubishi-service
     container_name: mitsubishi-service
+    ports:
+      - "127.0.0.1:8770:8770"
 
   mazak:
     <<: *service-defaults
     build: ./mazak-service
     image: mazak-service
     container_name: mazak-service
+    ports:
+      - "127.0.0.1:8771:8771"

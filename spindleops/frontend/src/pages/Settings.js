@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import ThemeToggle from '../components/ThemeToggle';
 import { useAPI } from '../hooks/useData';
 
-const API = `http://${window.location.hostname}:3001/api`;
+const API = `http://${window.location.hostname}:3002/api`;
 
 // Portas padrão por protocolo
 const DEFAULT_PORTS = {
@@ -13,6 +13,9 @@ const DEFAULT_PORTS = {
   siemens_s7:   102,
   modbus:       502,
   heidenhain:   19000,
+  mtconnect:    5000,
+  mazak:        5000,
+  mitsubishi:   5007,
   simulator:    null,
 };
 
@@ -24,6 +27,9 @@ const PROTOCOL_LABELS = {
   siemens_s7:    'Siemens S7',
   modbus:        'Modbus TCP',
   heidenhain:    'Heidenhain LSV2',
+  mtconnect:     'MTConnect (Mazak/Okuma/Haas)',
+  mazak:         'Mazak (descoberta automática)',
+  mitsubishi:    'Mitsubishi MC Protocol',
   simulator:     'Simulador',
 };
 
@@ -52,7 +58,17 @@ function emptyForm() {
     id: '', name: '', protocol: 'simulator',
     address: '', port: '', enabled: true,
     registers: { ...DEFAULT_REGISTERS },
+    opcUser: '', opcPass: '',
   };
+}
+
+// Monta o registers enviado ao backend conforme o protocolo
+function buildRegisters(form) {
+  if (form.protocol === 'modbus') return form.registers;
+  if (form.protocol === 'siemens_opcua' && form.opcUser.trim()) {
+    return { opc_user: form.opcUser.trim(), opc_pass: form.opcPass };
+  }
+  return null;
 }
 
 // ── Formulário de criação/edição ───────────────────────────────────────────────
@@ -97,7 +113,7 @@ function MachineForm({ initial, onSave, onCancel, isNew }) {
       address:  form.address.trim() || null,
       port:     form.port ? parseInt(form.port) : null,
       enabled:  form.enabled,
-      registers: form.protocol === 'modbus' ? form.registers : null,
+      registers: buildRegisters(form),
     };
 
     try {
@@ -185,6 +201,30 @@ function MachineForm({ initial, onSave, onCancel, isNew }) {
               placeholder={DEFAULT_PORTS[form.protocol] || ''}
               value={form.port}
               onChange={e => set('port', e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Credenciais OPC-UA (Sinumerik exige usuário/senha) */}
+      {form.protocol === 'siemens_opcua' && (
+        <div className="form-row form-row-2">
+          <div className="form-group">
+            <label className="form-label">Usuário OPC-UA</label>
+            <input
+              className="form-input"
+              placeholder="ex: OpcUaClient"
+              value={form.opcUser}
+              onChange={e => set('opcUser', e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Senha OPC-UA</label>
+            <input
+              className="form-input"
+              type="password"
+              value={form.opcPass}
+              onChange={e => set('opcPass', e.target.value)}
             />
           </div>
         </div>
@@ -290,6 +330,8 @@ function MachineCard({ machine, onRefetch }) {
     port:      machine.port    || '',
     enabled:   isOn,
     registers: { ...DEFAULT_REGISTERS, ...(machine.registers || {}) },
+    opcUser:   machine.registers?.opc_user || '',
+    opcPass:   machine.registers?.opc_pass || '',
   };
 
   return (
