@@ -144,8 +144,9 @@ body {
 .mc-status { font-size: 19px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
 .mc-prog { font-family: var(--mono); font-size: 10px; color: var(--muted); }
 .mc-ip { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.mc-mode { font-size: 9px; padding: 2px 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
 
-.mc-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; }
+.mc-metrics { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; }
 .mc-metric { background: var(--bg3); border-radius: 6px; padding: 8px 10px; }
 .mc-metric-lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 3px; }
 .mc-metric-val { font-size: 14px; font-weight: 600; }
@@ -167,7 +168,7 @@ body {
 .detail-title { font-size: 14px; font-weight: 600; }
 .detail-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-.detail-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 14px; }
+.detail-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .detail-metric-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 3px; }
 .detail-metric-val { font-size: 22px; font-weight: 700; }
 .detail-metric-unit { font-size: 11px; color: var(--muted); font-weight: 400; }
@@ -176,6 +177,7 @@ body {
 .pos-box { background: var(--bg3); border-radius: 8px; padding: 10px 12px; }
 .pos-ax { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
 .pos-val { font-family: var(--mono); font-size: 16px; font-weight: 500; }
+.pos-load { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 
 .btn-primary {
   display: inline-flex; align-items: center; gap: 6px;
@@ -223,7 +225,7 @@ body {
 }
 
 /* ── KPIs ──────────────────────────── */
-.kpi-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin-bottom: 16px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 10px; margin-bottom: 16px; }
 .kpi-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
 .kpi-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
 .kpi-val { font-size: 26px; font-weight: 700; line-height: 1; }

@@ -115,7 +115,12 @@ export default function Live() {
                 </div>
 
                 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                  <div className="mc-status" style={{ color: st.color }}>{st.label}</div>
+                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                    <div className="mc-status" style={{ color: st.color }}>{st.label}</div>
+                    {m.cnc_mode && (
+                      <span className="mc-mode" title="Modo de operação do CNC">{m.cnc_mode}</span>
+                    )}
+                  </div>
                   {m.program_name && m.program_name !== '—' && (
                     <div className="mc-prog">▶ {m.program_name}</div>
                   )}
@@ -134,6 +139,12 @@ export default function Live() {
                     <div className="mc-metric-val">
                       {m.feed_rate > 0 ? Math.round(m.feed_rate) : '—'}
                       <span className="mc-metric-unit"> mm/m</span>
+                    </div>
+                  </div>
+                  <div className="mc-metric">
+                    <div className="mc-metric-lbl">Ferram.</div>
+                    <div className="mc-metric-val" style={{ color: '#a78bfa' }} title="Ferramenta em uso (T)">
+                      {m.tool_number != null ? `T${m.tool_number}` : '—'}
                     </div>
                   </div>
                   <div className="mc-metric">
@@ -199,6 +210,8 @@ export default function Live() {
                 {[
                   { lbl: 'Rotação spindle', val: sel.spindle_speed > 0 ? sel.spindle_speed.toLocaleString('pt-BR') : '—', unit: 'rpm', color: (STATUS[sel.status]||STATUS.offline).color },
                   { lbl: 'Taxa de avanço',  val: sel.feed_rate > 0 ? Math.round(sel.feed_rate) : '—', unit: 'mm/min' },
+                  { lbl: 'Ferramenta',      val: sel.tool_number != null ? `T${sel.tool_number}` : '—', unit: '', color: '#a78bfa' },
+                  { lbl: 'Modo CNC',        val: sel.cnc_mode || '—', unit: '' },
                   { lbl: 'Peças no turno',  val: sel.parts_count ?? '—', unit: 'pçs', color: '#38bdf8' },
                 ].map(d => (
                   <div key={d.lbl}>
@@ -213,7 +226,8 @@ export default function Live() {
               <div className="sec-lbl">Posição atual dos eixos</div>
               <div className="pos-grid">
                 {['X','Y','Z'].map((ax, i) => {
-                  const v = [sel.pos_x, sel.pos_y, sel.pos_z][i];
+                  const v    = [sel.pos_x, sel.pos_y, sel.pos_z][i];
+                  const load = [sel.axis_load_x, sel.axis_load_y, sel.axis_load_z][i];
                   return (
                     <div key={ax} className="pos-box">
                       <div className="pos-ax">Eixo {ax}</div>
@@ -221,6 +235,14 @@ export default function Live() {
                         {v != null ? v.toFixed(3) : '—'}
                         <span style={{ fontSize:11, color:'#64748b', fontWeight:400 }}> mm</span>
                       </div>
+                      {load != null && (
+                        <div className="pos-load" title={`Carga do eixo ${ax}`}>
+                          <div className="mc-gauge-track" style={{ height:4, flex:1 }}>
+                            <div className="mc-gauge-fill" style={{ width:`${Math.min(load,100)}%`, background: loadColor(load) }} />
+                          </div>
+                          <span style={{ fontSize:10, color: loadColor(load), fontWeight:600 }}>{load.toFixed(0)}%</span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

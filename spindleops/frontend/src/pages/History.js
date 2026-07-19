@@ -19,6 +19,14 @@ const EV_CFG = {
   on:      { label:'Ligada',   color:'#a78bfa', bg:'#a78bfa18' },
 };
 
+// 312.5 min → "5h12"
+function fmtMin(min) {
+  if (min == null) return null;
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${m}min`;
+}
+
 const CHART_OPTS = {
   grid: 'rgba(128,128,128,.1)',
   text: '#64748b',
@@ -63,10 +71,12 @@ export default function History() {
   }));
 
   // KPIs
-  const run    = oee?.availability ?? 0;
-  const oeeVal = oee?.oee          ?? 0;
-  const parts  = oee?.parts_produced ?? 0;
-  const alarms = (events || []).filter(e => e.type === 'alarm').length;
+  const run     = oee?.availability ?? 0;
+  const oeeVal  = oee?.oee          ?? 0;
+  const parts   = oee?.parts_produced ?? 0;
+  const alarms  = (events || []).filter(e => e.type === 'alarm').length;
+  const autoT   = fmtMin(oee?.auto_minutes);
+  const cutT    = fmtMin(oee?.cutting_minutes);
 
   return (
     <div className="page">
@@ -134,6 +144,8 @@ export default function History() {
             { lbl:'Disponibilidade', val:run,    unit:'%',   sub:`período de ${Math.min(hours,24)}h`,  color: run>=75?'#22c55e':'#eab308' },
             { lbl:'OEE estimado',    val:oeeVal, unit:'%',   sub:'Disp. × Desemp. × Qual.',             color: oeeVal>=75?'#22c55e':'#eab308' },
             { lbl:'Peças produzidas',val:parts,  unit:'pçs', sub:'no período',                          color:'#38bdf8' },
+            { lbl:'Tempo em automático', val:autoT ?? '—', unit:'', sub:autoT ? 'contador do CNC' : 'não reportado', color:'#a78bfa' },
+            { lbl:'Tempo de corte',      val:cutT  ?? '—', unit:'', sub:cutT  ? 'contador do CNC' : 'não reportado', color:'#a78bfa' },
             { lbl:'Alarmes',         val:alarms, unit:'',    sub:alarms>0?'verificar eventos':'nenhum', color:alarms>0?'#ef4444':'#22c55e' },
           ].map(k => (
             <div key={k.lbl} className="kpi-card">

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_URL = `ws://${window.location.hostname}:3001`;
+const WS_URL = `ws://${window.location.hostname}:3002`;
 
 export function useLiveData() {
   const [machines, setMachines] = useState({});
@@ -55,7 +55,7 @@ export function useAPI(path, intervalMs = 0) {
   const load = useCallback(async () => {
     if (!path) return;
     try {
-      const res  = await fetch(`http://localhost:3001/api${path}`);
+      const res  = await fetch(`http://localhost:3002/api${path}`);
       const json = await res.json();
       setData(json);
     } catch {}
