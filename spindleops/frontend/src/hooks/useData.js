@@ -1,6 +1,7 @@
+import { API_BASE, WS_BASE } from '../config/api';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_URL = `ws://${window.location.hostname}:3002`;
+const WS_URL = WS_BASE;
 
 export function useLiveData() {
   const [machines, setMachines] = useState({});
@@ -55,7 +56,7 @@ export function useAPI(path, intervalMs = 0) {
   const load = useCallback(async () => {
     if (!path) return;
     try {
-      const res  = await fetch(`http://localhost:3002/api${path}`);
+      const res  = await fetch(`${API_BASE}/api${path}`);
       const json = await res.json();
       setData(json);
     } catch {}

@@ -1,9 +1,10 @@
+import { API_BASE } from '../config/api';
 import React, { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import ThemeToggle from '../components/ThemeToggle';
 import { useAPI } from '../hooks/useData';
 
-const API = `http://${window.location.hostname}:3002/api`;
+const API = `${API_BASE}/api`;
 
 // Portas padrão por protocolo
 const DEFAULT_PORTS = {

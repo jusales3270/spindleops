@@ -13,3 +13,8 @@ yarn-error.log*
 *.backup
 __pycache__/
 spindleops/backend/fwlib/
+
+# Banco local — nunca versionar
+*.db
+*.db-journal
+*.db-wal

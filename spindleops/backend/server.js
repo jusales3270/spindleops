@@ -232,6 +232,12 @@ app.post('/api/machines/:id/test', async (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
+// ── SERVE FRONTEND ────────────────────────────────────────────────────────────
+const path = require('path');
+const BUILD_DIR = path.join(__dirname, '..', 'frontend', 'build');
+app.use(express.static(BUILD_DIR));
+app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(BUILD_DIR, 'index.html')));
+
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, async () => {
   console.log(`\n⚙  SpindleOps backend rodando em http://localhost:${PORT}`);
